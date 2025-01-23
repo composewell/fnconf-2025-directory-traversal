@@ -1,0 +1,784 @@
+% https://ctan.um.ac.ir/macros/latex/contrib/beamer/doc/beameruserguide.pdf
+\documentclass[17pt]{beamer}
+\mode<presentation>{\usetheme{default} \setbeamercovered{transparent}}
+
+\usepackage[english]{babel}
+%\usepackage{times}
+\usepackage{tgadventor}
+\usepackage{graphicx}
+\usepackage{hyperref}
+%\usepackage[T1]{fontenc}
+\usepackage[font=tiny]{caption}
+
+%------------------------------------------------------------------------------
+% Title/Author/Organization/Date
+%------------------------------------------------------------------------------
+
+%\title[Haskell Streamly]{Directory Traversal: Haskell Outperforms Rust}
+\title[Haskell Streamly]{Directory Traversal in Haskell}
+\author{Harendra Kumar \texttt{harendra@composewell.com}}
+\institute{Composewell Technologies}
+\date{\small Functional Conf 2025}
+
+\input{haskell-code}
+
+%\AtBeginSubsection[]
+%{
+%  \begin{frame}<beamer>{Outline}
+%    \tableofcontents[currentsection,currentsubsection]
+%  \end{frame}
+%}
+
+%------------------------------------------------------------------------------
+\begin{document}
+%------------------------------------------------------------------------------
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+%\begin{frame}{Outline}
+%  \tableofcontents [pausesections]
+%\end{frame}
+
+%------------------------------------------------------------------------------
+\section{Motivation}
+%------------------------------------------------------------------------------
+
+\begin{frame}{Outline of the Talk}{Tree Traversals}
+\begin{itemize}
+    % This talk is also a case study in understanding and improving performance
+    % characterstics of a Haskell program.
+  \item A case study in performance improvement
+  \item Directory traversal in Haskell
+  \item Directory traversal in Haskell Streamly
+  \item Tree traversal combinators in Streamly
+  %\item Breadth first (BFS) vs depth first (DFS) traversals
+  \item BFS vs DFS traversals
+  \item Many ways to write tree traversals
+  %\item Graph traversals
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Outline of the Talk}{Concurrency and Performance}
+\begin{itemize}
+  \item Concurrent tree traversal
+  \item Comparing the performance % with ls, find and Rust's fd
+  \item Why Haskell is faster than Rust?
+    % Where else is it faster?
+    % Can everything be faster in Haskell?
+    % What is the right way to write fast Haskell programs?
+    % Streamly is a framework to let you write it in the right way so that it
+    % is automatically fast.
+  \item Performance lessons and takeaways
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Directory Traversal - Naive.hs}
+{}
+\tiny
+\begin{minipage}{\textwidth}
+\begin{code}
+listDir :: FilePath -> IO ()
+listDir dir = do
+ contents <- listDirectory dir -- getdents syscall
+ let fullPaths = map (dir </>) contents
+ forM fullPaths $ \path -> do
+  isDir <- doesDirectoryExist path -- stat syscall
+  if isDir
+  then do
+   symlink <- pathIsSymbolicLink path -- lstat call
+   if symlink
+   then putStrLn path
+   else listDir path -- depth first
+  else putStrLn path
+ putStrLn dir
+\end{code}
+\end{minipage}
+\end{frame}
+
+\begin{frame}{Benchmarking Setup}{}
+\begin{itemize}
+  \item Operating system: Linux
+  \item Dataset: git repos with build artifacts
+  \item total directories: $\approx 10K$
+  \item total files : $\approx 50K$
+  \item maximum depth: $\approx 20$ levels
+  \item maximum breadth: $\approx 500$ files
+  \item Symbolic links not followed
+  %\item BFS vs DFS
+  % DFS/BFS compare with find using -depth option
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Benchmarking Parameters}{}
+%\tiny
+
+%Parameters to measure:
+\begin{itemize}
+  \item Wall clock time
+  \item CPU time
+  \item OS Memory (peak rss)
+  \item Haskell allocations
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Benchmarking Tools}{}
+%\tiny
+
+Measurement tools:
+\begin{itemize}
+  \item timing: bash built-in `time'
+  \item os memory: standalone `time -v'
+  \item Haskell allocations: `+RTS -s'
+  %\item output coloring is disabled for fd
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Correctness and Fairness Check}{}
+%\tiny
+
+GNU find output:
+\begin{code}
+$ find .| wc
+57257   57257 4095021
+\end{code}
+
+Naive Haskell program output:
+\begin{code}
+$ ghc -O2 Naive.hs
+$ ./Naive | wc
+57257   57257 4095021
+\end{code}
+\end{frame}
+
+\begin{frame}{GNU find vs Naive Haskell}{CPU time}
+%\tiny
+
+%GNU find vs Naive Haskell - CPU time:
+\begin{itemize}
+  \item \$ time find . > /dev/null \\
+real    0m0.184s \\
+user    0m0.088s \\
+sys     0m0.096s \\
+
+\item \$ time ./Naive > /dev/null \\
+real    0m0.454s \\
+user    0m0.291s \\
+sys     0m0.164s \\
+
+%  \item \$ time find -depth . > /dev/null
+%  \item \$ time bfs -j1 -depth . > /dev/null
+%  %\item \$ time fd -j1 -u --color never . > /dev/null
+%  \item \$ time fd -j1 -u . > /dev/null
+  %\item \$ time ls -fR1A . > /dev/null
+\end{itemize}
+\end{frame}
+
+\begin{frame}{What is wrong with Naive?}{}
+
+Simple and idiomatic code but:
+\begin{itemize}
+  \item `listDirectory' buffers entire dir
+  \item `listDirectory' uses [Char] as paths
+  \item Additional `stat' call for isDir check
+  \item Additional `stat' call for symlink check
+  \item One `putStrLn' call for each path
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Naive.hs with OsPath}
+{}
+\tiny
+\begin{minipage}{\textwidth}
+\begin{code}
+listDir :: OsPath -> IO ()
+listDir dir = do
+ contents <- listDirectory dir
+ let fullPaths = map (dir </>) contents
+ forM fullPaths $ \path -> do
+     isDir <- doesDirectoryExist path
+     if isDir
+     then do
+         symlink <- pathIsSymbolicLink path
+         if symlink
+         then putStrLn $ fromJust $ decodeUtf path
+         else listDir path -- depth first
+     else putStrLn $ fromJust $ decodeUtf path
+ putStrLn $ fromJust $ decodeUtf dir
+\end{code}
+\end{minipage}
+\end{frame}
+
+\begin{frame}{Naive with OsPath}{CPU time}
+%\tiny
+
+\begin{itemize}
+\item \$ time ./NaiveOsPath > /dev/null \\
+real    0m0.382s \\
+user    0m0.176s \\
+sys     0m0.207s \\
+
+\item 16\% improvement over Naive (454 ms) % by repacing [Char] with OsPath.
+%  \item \$ time find -depth . > /dev/null
+%  \item \$ time bfs -j1 -depth . > /dev/null
+%  %\item \$ time fd -j1 -u --color never . > /dev/null
+%  \item \$ time fd -j1 -u . > /dev/null
+  %\item \$ time ls -fR1A . > /dev/null
+\end{itemize}
+\end{frame}
+
+%loopDir :: PosixString -> DirStream -> IO ()
+    %resetErrno
+
+        %errno <- getErrno
+        %if (errno == eINTR)
+        %then loopDir dirname dirp
+        %else do
+        %    let (Errno n) = errno
+        %    if (n == 0)
+        %    then closeDirStream dirp
+        %    else throwErrno "loopDir"
+\begin{frame}[fragile]{Naive.hs with DirStream}
+{}
+\begin{minipage}{\textwidth}
+\tiny
+\begin{code}
+loopDir dirname dirp = do
+    ptr <- c_readdir dirp -- no buffering
+    if (ptr /= nullPtr)
+    then do
+        let dname = #{ptr struct dirent,d_name} ptr
+        dtype <- #{peek struct dirent, d_type} ptr
+        name <- peekFilePath (castPtr dname)
+        let fn = dirname </> name
+        if dtype == (#const DT_DIR)
+        then do
+            isMeta <- isMetaDir dname
+            when (not isMeta) $ do
+                putStrLn $ fromJust $ decodeUtf fn
+                openDirStream fn >>= loopDir fn
+        else putStrLn $ fromJust $ decodeUtf fn
+        loopDir dirname dirp
+    else do
+      ...
+\end{code}
+\end{minipage}
+\end{frame}
+
+\begin{frame}{Naive with DirStream}{CPU time}
+%\tiny
+
+\begin{itemize}
+\item \$ time ./NaiveDirStream > /dev/null \\
+real    0m0.250s \\
+user    0m0.162s \\
+sys     0m0.087s \\
+
+\item 35\% better than NaiveOsPath (382 ms)
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Issues with NaiveDirStream}{}
+
+We fixed all perf issues we mentioned except one. Now we have:
+\begin{itemize}
+  \item One `putStrLn' call for each path
+  \item Also, path to string for printing
+  \item Code is low level vs NaiveOsPath
+  \item Still slower than `find'
+\end{itemize}
+
+Can we do elegant as well as performant?
+\end{frame}
+
+\begin{frame}[fragile]{Batched with Streamly}
+{Composable Pipelines - serial}
+\tiny
+\begin{minipage}{\textwidth}
+\begin{code}
+listDir :: IO ()
+listDir = do
+ Stream.fold (Handle.writeWith 32000 stdout)
+  $ Stream.unfoldEachEndBy 10 Array.reader
+  $ fmap (Path.toChunk . either id id)
+  $ toK StreamK.concatIterateWith StreamK.append f
+  $ Stream.fromPure dir
+
+ where
+
+ f :: Either Path b -> Stream IO (Either Path Path)
+ f = either Dir.readEitherPaths (const Stream.nil)
+
+ dir = Left (fromJust $ Path.fromString ".")
+\end{code}
+\end{minipage}
+\end{frame}
+
+\begin{frame}{Where are we?}{CPU time}
+%\tiny
+
+\begin{itemize}
+\item \$ time ./BatchedStreamly > /dev/null \\
+real    0m0.184s \\
+user    0m0.079s \\
+sys     0m0.105s \\
+
+\item performance is same as GNU find!
+\item code is perfectly modular!
+\item and we are not done yet!
+\end{itemize}
+\end{frame}
+
+% listDir :: IO ()
+%listDir = do
+% Stream.fold (Handle.writeWith 32000 stdout)
+%  $ Stream.unfoldEachEndBy 10 Array.reader
+%  $ fmap Path.toChunk
+%  $ Stream.unfoldEach Unfold.fromList
+%  $ fmap (either id id)
+%  $ toK StreamK.concatIterateWith StreamK.append f
+%  $ Stream.fromPure dir
+%
+ %where
+
+\begin{frame}[fragile]{Chunked reads with Streamly}
+{Composable Pipelines - serial}
+\begin{minipage}{\textwidth}
+
+Single path to single path stream:
+\begin{code}
+f :: Either Path b -> Stream IO (Either Path Path)
+f = either Dir.readEitherPaths (const Stream.nil)
+\end{code}
+
+Path list to path list stream:
+\begin{code}
+f :: Either [Path] b
+  -> Stream IO (Either [Path] [Path])
+f = either Dir.readEitherChunks (const Stream.nil)
+
+\end{code}
+\end{minipage}
+\end{frame}
+
+\begin{frame}{Chunked Read Performance}{CPU time}
+%\tiny
+
+\begin{itemize}
+\item \$ time ./ChunkedStreamly > /dev/null \\
+real    0m0.144s \\
+user    0m0.050s \\
+sys     0m0.094s \\
+
+\item better than GNU find (184 ms)!
+\item code is perfectly modular!
+\item and we are not done yet!
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Batched stream output}
+{Composable Pipelines - serial}
+\begin{minipage}{\textwidth}
+
+Path list to path buffer stream:
+\begin{code}
+f :: Either [Path] b
+  -> Stream IO (Either [Path] (Array Word8))
+f = either
+      Dir.readEitherByteChunks
+      (const Stream.nil)
+\end{code}
+\end{minipage}
+\end{frame}
+
+\begin{frame}{Chunked Read Performance}{CPU time}
+
+\begin{itemize}
+\item \$ time ./BufOutStreamly > /dev/null \\
+real    0m0.134s \\
+user    0m0.041s \\
+sys     0m0.093s \\
+
+\item fastest serial version yet
+\item there are still some opportunities
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Concurrent Traversal}
+{Composable Pipelines - concurrent}
+\begin{minipage}{\textwidth}
+
+Serial stream iteration:
+\begin{code}
+StreamK.concatIterateWith StreamK.append f
+\end{code}
+
+Parallel stream iteration:
+\begin{code}
+Stream.parConcatIterate id f
+\end{code}
+\end{minipage}
+\end{frame}
+
+\begin{frame}[fragile]{Parallel Traversal Performance}{CPU time}
+
+\begin{itemize}
+\item
+\begin{code}
+$ time ./ParStreamly > /dev/null
+real    0m0.085s
+user    0m0.060s
+sys     0m0.086s
+\end{code}
+
+\item 171\% CPU utilization (146/85)
+\item that's all, we are done now
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Exercise}{Write Your Own}
+\begin{itemize}
+  \item Write this in your favorite lang
+  \item Compare the performance
+  \item Hint: Use GPT to do it quickly
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Comparative Performance}{Tools Compared}
+\tiny
+
+%\begin{itemize}
+%  % https://unix.stackexchange.com/questions/279895/how-can-i-do-a-breadth-first-search-using-find
+%  \item GNU find default order is neither dfs nor bfs
+%  \item GNU find has -depth (DFS) option
+%  \item GNU ls order is also neither dfs nor bfs
+%  \item Rust fd traverses in dfs order
+%  \item The `bfs' tool traverses in bfs order
+%  % https://github.com/tavianator/bfs
+%\end{itemize}
+
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+  & GNU find & bfs & fd -u & ListDir \\
+\hline
+  %Version & GNU ls 9.3 & GNU find 4.9.0 & fd 8.7.1 & bfs 3.0.4 \\
+  Version & GNU find 4.9.0 & bfs 3.0.4 & fd 8.7.1 & streamly-0.11 \\
+\hline
+  Language & C & C & Rust & Haskell \\
+\hline
+  Search Order & Mixed,DFS & BFS,DFS & DFS & BFS,DFS \\
+\hline
+% Options used
+\end{tabular}
+\end{frame}
+
+\begin{frame}[fragile]{Comparative Performance}{Functionality Check for Tools}
+
+Ensure we are traversing same no. of dirs:
+\begin{code}
+  $ find .| wc
+  57257   57257 4095021
+  $ bfs .| wc
+  57257   57257 4095021
+  $ fd -u .| wc
+  57256   57256 3990961
+  $ ListDir | wc
+  57256   57256 4095019
+\end{code}
+  %\item \$ ls -fR1A|wc \\
+  %78165   67711 1964893
+\end{frame}
+
+\begin{frame}[fragile]{Comparative Performance}{Cases to benchmark}
+
+\begin{itemize}
+  \item case 1: IO Bound (with cold cache), clear the caches first:
+\begin{itemize}
+%\tiny
+  %\item \$ cat /proc/sys/fs/dentry-state
+  %\item \$ cat /proc/meminfo
+  %\item \$ sync; echo 1 > /proc/sys/vm/drop_caches  % page cache
+  %\item \$ sync; echo 2 > /proc/sys/vm/drop_caches % dentries, inodes
+\item
+\begin{code}
+$ sync; echo 3 \> /proc/sys/vm/drop\_caches
+\end{code}
+  \item Run ls in the parent dir to fill required parent caches
+\end{itemize}
+  \item case 2: CPU Bound (with hot cache), run the command once before
+  measuring to warm the cache
+  \item Serial vs Concurrent
+  %\item DFS vs BFS
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{CPU Bound - Serial}{Hot Cache}
+\tiny
+
+%\item CPU time and real time are very close indicates that there is no
+%IO involved.
+
+%& GNU ls & GNU find & Rust fd & bfs & ListDir \\
+%Real time & 150 & 187 & 175 & 108 & 134 \\
+%CPU time & 149 & 186 & 304 & 108 & 133 \\
+%RSS & 3404 K & 2872 K & 26204 K & 3564 K & 14556 K\\
+%\begin{tabular}{|l|l|l|l|l|}
+%\hline
+%  & GNU find & bfs & Rust fd & ListDir \\
+%\hline
+%  Real time & 187 & 112 & 175 & 134 \\
+%\hline
+%  CPU time & 186 & 111 & 304 & 133 \\
+%\hline
+%  CPU util & 99.5\% & 101.8\% & \color{red}{173.7\%} & 99.3\% \\
+%\hline
+%  Memory & 2.8 MiB & 3.5 MiB & 25.5 MiB & 14.2 MiB\\
+%\hline
+%\end{tabular}
+
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+  & bfs (C) & ListDir (Haskell) & GNU find (C) & fd (Rust) \\
+\hline
+  Real time & 112 ms & 134 ms & 187 ms & 175 ms \\
+\hline
+  CPU time & 111 ms & 133 ms & 186 ms & 304 ms \\
+\hline
+  CPU util & 101.8\% & 99.3\% & 99.5\% & \color{red}{173.7\%} \\
+\hline
+  Memory & 3.5 MiB & 14.2 MiB & 2.8 MiB & 25.5 MiB\\
+\hline
+\end{tabular}
+
+Note: fd -j1 is not actually serial!
+
+Note: the memory difference between Haskell and C is because of a constant
+overhead due to Haskell RTS.
+
+\end{frame}
+
+%\begin{frame}{Benchmark Results}{Serial + BFS + CPU bound}
+%\tiny
+%
+%\begin{tabular}{|l|l|l|}
+%\hline
+%  & bfs & ListDir \\
+%\hline
+%  Real time & 108 & 134 \\
+%\hline
+%  CPU time & 108 & 134 \\
+%\hline
+%  CPU util & 100\% & 100\% \\
+%\hline
+%  Memory & 3.5 MiB & 12.5 MiB\\
+%\hline
+%\end{tabular}
+%\end{frame}
+
+%\begin{frame}{Benchmark Results}{Concurrent + BFS + CPU bound}
+%\tiny
+%
+%\begin{tabular}{|l|l|l|}
+%\hline
+%  & bfs & ListDir \\
+%\hline
+%  Real time & 126 & 134 \\
+%\hline
+%  CPU time & 216 & 134 \\
+%\hline
+%  CPU util & 171\% & 100\% \\
+%\hline
+%  Memory & 56.7 MiB & 12.5 MiB\\
+%\hline
+%\end{tabular}
+%\end{frame}
+
+\begin{frame}{CPU Bound - Concurrent}{Hot Cache}
+\tiny
+
+\begin{tabular}{|l|l|l|l|}
+\hline
+  & ListDir (Haskell) & bfs (C) & fd (Rust) \\
+\hline
+  Real time & 84 ms & 125 ms & 140 ms \\
+\hline
+  CPU time & 149 ms & 222 ms & 262 ms \\
+\hline
+  CPU util & 177\% & 177\% & 187\% \\
+\hline
+  Memory & 22.5 MiB & 56.7 MiB & 40.4 MiB \\
+\hline
+\end{tabular}
+\end{frame}
+
+\begin{frame}{IO Bound - Serial}{Cold Cache}
+\tiny
+
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+  & find (C)
+  & ListDir (Haskell)
+  & bfs (C)
+  & fd (Rust)
+  \\
+\hline
+  Real time
+  & 6984 ms
+  & 6988 ms
+  & 7616 ms
+  & 7062 ms
+  \\
+\hline
+  CPU time
+  & 917 ms
+  & 1033 ms
+  & 887 ms
+  & 1601 ms
+  \\
+\hline
+  CPU util
+  & 13.1\%
+  & 14.8\%
+  & 11.6\%
+  & 22.7\%
+  \\
+\hline
+  Memory
+  & 2.6 MiB
+  & 14.0 MiB
+  & 3.5 MiB
+  & 27.5 MiB
+  \\
+\hline
+\end{tabular}
+
+Note: fd is likely not single threaded as we saw in CPU bounded case.
+
+\end{frame}
+
+\begin{frame}{IO Bound - Concurrent}{Cold Cache}
+\tiny
+
+\begin{tabular}{|l|l|l|l|}
+\hline
+  & ListDir (Haskell)
+  & fd (Rust)
+  & bfs (C)
+  \\
+\hline
+  Real time
+  & 5982 ms
+  & 5987 ms
+  & 6858 ms
+  \\
+\hline
+  CPU time
+  & 895 ms
+  & 1370 ms
+  & 1203 ms
+  \\
+\hline
+  CPU util
+  & 15\%
+  & 22.9\%
+  & 17.5\%
+  \\
+\hline
+  Memory
+  & 19.3 MiB
+  & 39.6 MiB
+  & 56.5 MiB
+  \\
+\hline
+\end{tabular}
+
+\end{frame}
+
+%\begin{frame}{Performance Lessons}{}
+%\begin{itemize}
+%  \item it is all about removing allocations in the fast path
+%  \item which comes down to removing all possible intermediate structures
+%  \item Carefully review your code and see which allocations are removable.
+%  \item I do most of the optimizations by review only, not by measuring or
+%    debugging.
+%  \item Loop fusion is good at it
+%  \item when we are dealing in big chunks fusion may not matter, the runs a
+%    fewer times and does a lot more work. So what matters is that one big stage
+%    and not the fusion of that stage with other stages. Trying to fuse it via a
+%    fusible state machine will make matters worse.
+%  \item thumbrule - for smaller loops fusion is important, for bigger loops
+%    fusion makes it worse.
+%  \item in a larger loop make the Skip as function calls
+%  \item Copying data is almost nothing compared to the time it takes to run the
+%    loop so many times with many allocations. Copying is almost free at times,
+%    caring about it is useless unless we are talking about a large amount of
+%    data or cache effects of small copying.
+%  \item Chunking is always good.
+%\end{itemize}
+
+\begin{frame}{Modularity Pays}{Focus on important parts}
+\begin{itemize}
+  \item Focus is on the structure, not details
+  %\item Look at the outline of our example
+  %\item Focus is on iteration and compaction
+  \item Modularity from bottom to top
+  \item Program: composed building blocks
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Modularity Pays}{Bottom to Top Modularity}
+
+Building blocks:
+\begin{itemize}
+  \item well tested
+  \item well benchmarked
+  \item well composed
+  %\item Composing them does not change perf
+  \item Avoids ad-hoc, monolithic code
+  %\item This ultimately pays off in keeping performance good
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Exercise}{Write fd using Streamly}
+\begin{itemize}
+  % call it fnd
+  \item with all compatible options
+  \item with both DFS and BFS modes
+  \item will need a regex library
+\end{itemize}
+\end{frame}
+
+%\begin{frame}{Key Takeaways}{Systems Programming}
+%\begin{itemize}
+%  \item Haskell for systems programming
+%  %\item Haskell can equal or outperform Rust % in real world applications
+%  \item Can Haskell do as well as C or Rust or other systems programming
+%    languages? The answer is an EMPHATIC yes. We have done this time and again
+%    and with good modularity using idiomatic code. We have sort of perfected
+%    this now using some rules and programming patterns.
+%    There is a lot of framework level work still to be done to enable this in a
+%    wide range of use cases, but we will get there. We can make Haskell great
+%    again.
+%  \item Haskell RealWorld\# $\geq$ Rust
+%  \item Concise: quickly build high level code
+%  \item Modular: fearless refactoring
+%\end{itemize}
+%\end{frame}
+%
+\begin{frame}{Key Takeaways}{Concurrency and Performance}
+\begin{itemize}
+  \item Fearless concurrency
+  \item Concurrent yet composable blocks
+  \item Invisible concurrency, almost free % in Haskell Streamly
+  \item Streamly: modular building blocks
+  \item Streamly: high-performance blocks
+  %\item Streamly lets you write high performance code in Haskell Streamly
+\end{itemize}
+\end{frame}
+
+
+%------------------------------------------------------------------------------
+\end{document}
+%------------------------------------------------------------------------------
