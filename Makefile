@@ -1,4 +1,4 @@
-OUTPUT = haskell-streamly.pdf
+OUTPUT = directory-traversal.pdf
 DEPS = $(wildcard img/*)
 
 #------------------------------------------------------------------------------
