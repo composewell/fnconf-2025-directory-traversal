@@ -10,6 +10,14 @@
 %\usepackage[T1]{fontenc}
 \usepackage[font=tiny]{caption}
 
+% Customize the appearance of links
+\hypersetup{
+    colorlinks=true, % Enable colored links
+    linkcolor=black, % Set the link color to black
+    urlcolor=blue,   % Set the URL color (if needed)
+%    citecolor=green  % Set the color for citations (if needed)
+}
+
 %------------------------------------------------------------------------------
 % Title/Author/Organization/Date
 %------------------------------------------------------------------------------
@@ -969,6 +977,13 @@ Streamly provides building blocks that are:
 %  \item Concise: quickly build high level code
 %  \item Modular: fearless refactoring
 \end{itemize}
+\end{frame}
+
+\begin{frame}{Links}
+  The complete code for the examples used in this presentation
+  \href{https://github.com/composewell/streamly-examples/blob/aec56f4e4481e97330aa5ce4324cd1a2d2b3c2bd/examples/ListDir.hs}
+  {can be found here}. Make sure to uncomment the intended part of the code in
+  the source file.
 \end{frame}
 
 \begin{frame}{}
