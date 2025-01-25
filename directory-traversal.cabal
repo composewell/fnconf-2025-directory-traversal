@@ -1,0 +1,63 @@
+cabal-version: 2.2
+name:          directory-traversal
+version:       0.2.0
+license:       Apache-2.0
+license-file:  LICENSE
+author:        Composewell Technologies
+maintainer:    streamly@composewell.com
+homepage:      https://streamly.composewell.com
+copyright:     Copyright (c) 2025 Composewell Technologies
+synopsis:      Examples for Streamly
+description:
+  Non-streamly examples for the directory-traversal presentation.
+stability:     provisional
+tested-with: GHC==9.4.4, GHC==9.2.7, GHC==9.0.1, GHC==8.10.7
+build-type:    Simple
+
+------------------------------------------------------------------------------
+-- Common Stanzas                                                           --
+------------------------------------------------------------------------------
+
+common exe-dependencies
+  build-depends:
+      base                  >= 4.9
+    , directory             >= 1.2
+    , filepath
+    , unix
+
+common exe-options
+  import: exe-dependencies
+  default-language: Haskell2010
+  hs-source-dirs:   examples
+
+  ghc-options: -O2
+               -fdicts-strict
+               -fspec-constr-recursive=16
+               -fmax-worker-args=16
+
+               -Wall
+               -Wcompat
+               -Wunrecognised-warning-flags
+               -Widentities
+               -Wincomplete-record-updates
+               -Wincomplete-uni-patterns
+               -Wredundant-constraints
+               -Wnoncanonical-monad-instances
+               -Wno-deprecations
+
+------------------------------------------------------------------------------
+-- Examples                                                                 --
+------------------------------------------------------------------------------
+
+executable Naive
+  import: exe-options
+  main-is: Naive.hs
+
+executable NaiveOsPath
+  import: exe-options
+  main-is: NaiveOsPath.hs
+
+executable NaiveDirStream
+  import: exe-options
+  main-is: NaiveDS.hs
+  other-modules: NaiveDirStream
