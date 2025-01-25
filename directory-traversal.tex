@@ -259,9 +259,7 @@ $ ./NaiveOsPath +RTS -s > /dev/null
         %    else throwErrno "loopDir"
 \begin{frame}[fragile]{Naive.hs with DirStream}
 {}
-\begin{minipage}{\textwidth}
-\tiny
-\begin{code}
+\begin{smallcode}
 loopDir dirname dirp = do
     ptr <- c_readdir dirp -- no buffering
     if (ptr /= nullPtr)
@@ -280,8 +278,7 @@ loopDir dirname dirp = do
         loopDir dirname dirp
     else do
       ...
-\end{code}
-\end{minipage}
+\end{smallcode}
 \end{frame}
 
 \begin{frame}[fragile]{Naive with DirStream}
@@ -980,15 +977,21 @@ Streamly provides building blocks that are:
 \end{frame}
 
 \begin{frame}{Source Code Links}
-  The Latex source for this presentation, and the working source code
-  for the non-streamly Haskell examples
-  \href{https://github.com/composewell/fnconf-2025-directory-traversal}
-  {can be found here}.
-
-  The complete working code for the Haskell Streamly examples used in this presentation
+\begin{itemize}
+\item
+\href{https://github.com/composewell/fnconf-2025-directory-traversal}
+  {this presentation}: and for basic Haskell example sources.
+\item
   \href{https://github.com/composewell/streamly-examples/blob/aec56f4e4481e97330aa5ce4324cd1a2d2b3c2bd/examples/ListDir.hs}
-  {can be found here}. Make sure to uncomment the intended part of the code in
-  the source file.
+    {streamly-examples repo}: for ListDir example source code.
+\item \href{https://github.com/composewell/streamly}{streamly repo}:
+  the perf improvements will be available in streamly-0.11 .
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Acknowledgements}
+  Thanks to Domen Kožar for sending a pull request to streamly that spurred
+  more performance improvements.
 \end{frame}
 
 \begin{frame}{}
